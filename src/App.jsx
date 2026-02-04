@@ -95,6 +95,12 @@ function HostUI({ socket, onBack }) {
   const [pendingAnswers, setPendingAnswers] = useState([])
   const [leaderboard, setLeaderboard] = useState([])
   const [correctToast, setCorrectToast] = useState(null)
+  const [totalRounds, setTotalRounds] = useState(10)
+  const [currentRound, setCurrentRound] = useState(1)
+  const [roundLocked, setRoundLocked] = useState(false)
+  const [correctCount, setCorrectCount] = useState(0)
+  const [gameEnded, setGameEnded] = useState(false)
+  const [finalLeaderboard, setFinalLeaderboard] = useState([])
   const previewPlayerRef = useRef(null)
   const endTimerRef = useRef(null)
   const fiveSecTimerRef = useRef(null)
@@ -119,10 +125,12 @@ function HostUI({ socket, onBack }) {
       }
     }
     const onLeaderboard = (data) => setLeaderboard(Array.isArray(data) ? data : [])
-    const onCorrect = ({ playerId, playerName }) => {
+    const onCorrect = ({ playerId, playerName, points, answerCount, roundLocked }) => {
       setPendingAnswers((prev) => prev.filter((a) => a.socketId !== playerId))
-      setCorrectToast(`${playerName} 答對了！`)
+      setCorrectToast(`${playerName} 答對了！獲得 ${points} 分`)
       setTimeout(() => setCorrectToast(null), 3000)
+      setCorrectCount(answerCount || 0)
+      setRoundLocked(roundLocked || false)
     }
     const onGameState = (state) => {
       setCurrentSong(state.videoId ? { videoId: state.videoId, songTitle: state.songTitle } : null)
@@ -130,15 +138,45 @@ function HostUI({ socket, onBack }) {
       setSongTitle(state.songTitle || '')
       setIsPlaying(state.isPlaying || false)
     }
+    const onRoundUpdate = ({ currentRound, totalRounds }) => {
+      setCurrentRound(currentRound || 1)
+      setTotalRounds(totalRounds || 10)
+    }
+    const onRoundStatusUpdate = ({ correctCount, roundLocked }) => {
+      setCorrectCount(correctCount || 0)
+      setRoundLocked(roundLocked || false)
+    }
+    const onGameEnded = ({ leaderboard }) => {
+      setGameEnded(true)
+      setFinalLeaderboard(Array.isArray(leaderboard) ? leaderboard : [])
+    }
+    const onGameReset = ({ currentRound, totalRounds }) => {
+      setGameEnded(false)
+      setCurrentRound(currentRound || 1)
+      setTotalRounds(totalRounds || 10)
+      setRoundLocked(false)
+      setCorrectCount(0)
+      setFinalLeaderboard([])
+      answeredThisRoundRef.current.clear()
+      setPendingAnswers([])
+    }
     socket.on('player_submitted_answer', onSubmitted)
     socket.on('update_leaderboard', onLeaderboard)
     socket.on('answer_correct_broadcast', onCorrect)
     socket.on('game_state', onGameState)
+    socket.on('round_update', onRoundUpdate)
+    socket.on('round_status_update', onRoundStatusUpdate)
+    socket.on('game_ended', onGameEnded)
+    socket.on('game_reset', onGameReset)
     return () => {
       socket.off('player_submitted_answer', onSubmitted)
       socket.off('update_leaderboard', onLeaderboard)
       socket.off('answer_correct_broadcast', onCorrect)
       socket.off('game_state', onGameState)
+      socket.off('round_update', onRoundUpdate)
+      socket.off('round_status_update', onRoundStatusUpdate)
+      socket.off('game_ended', onGameEnded)
+      socket.off('game_reset', onGameReset)
     }
   }, [socket])
 
@@ -154,6 +192,8 @@ function HostUI({ socket, onBack }) {
   const handlePlay = () => {
     setPendingAnswers([])
     answeredThisRoundRef.current.clear()
+    setRoundLocked(false)
+    setCorrectCount(0)
     clearTimers()
     const id = extractVideoId(videoId)
     if (!id) return
@@ -180,6 +220,8 @@ function HostUI({ socket, onBack }) {
   const handlePlay5Sec = () => {
     setPendingAnswers([])
     answeredThisRoundRef.current.clear()
+    setRoundLocked(false)
+    setCorrectCount(0)
     clearTimers()
     const id = extractVideoId(videoId)
     if (!id) return
@@ -221,6 +263,8 @@ function HostUI({ socket, onBack }) {
     answeredThisRoundRef.current.clear(); 
     socket.emit('next_round'); 
     setPendingAnswers([]);
+    setRoundLocked(false);
+    setCorrectCount(0);
     
     // 清空欄位
     setVideoId('');
@@ -230,6 +274,18 @@ function HostUI({ socket, onBack }) {
     setEndMin('0');
     setEndSec('0');
     setCurrentSong(null);
+  }
+
+  const handleSetTotalRounds = (value) => {
+    const rounds = parseInt(value, 10)
+    if (rounds > 0) {
+      setTotalRounds(rounds)
+      socket.emit('set_total_rounds', { totalRounds: rounds })
+    }
+  }
+
+  const handleResetGame = () => {
+    socket.emit('reset_game')
   }
 
   const handleAnswerCorrect = (playerId) => { socket.emit('answer_correct', { playerId }); setPendingAnswers((prev) => prev.filter((a) => a.socketId !== playerId)) }
@@ -255,6 +311,21 @@ function HostUI({ socket, onBack }) {
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.2fr] gap-4 lg:gap-6 max-w-7xl mx-auto">
         {/* 左欄：操作區 */}
         <div className="space-y-4 overflow-y-auto">
+          <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-4">
+            <h3 className="text-white font-semibold mb-3">遊戲設定</h3>
+            <div className="mb-4">
+              <label className="text-white/70 text-sm block mb-2">總題數</label>
+              <input 
+                type="number" 
+                min="1" 
+                value={totalRounds} 
+                onChange={(e) => handleSetTotalRounds(e.target.value)}
+                className="w-full px-4 py-2 rounded-xl bg-white/20 text-white placeholder-white/50 border border-white/20"
+              />
+              <p className="text-white/60 text-xs mt-1">目前第 {currentRound} / {totalRounds} 題</p>
+            </div>
+          </div>
+
           <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-4">
             <h3 className="text-white font-semibold mb-3">加入遊戲 QR Code</h3>
             <div className="flex flex-col sm:flex-row items-center gap-4 mb-4">
@@ -311,10 +382,33 @@ function HostUI({ socket, onBack }) {
 
           <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-4">
             <h3 className="text-white font-semibold mb-2">答案控制</h3>
+            <div className="mb-2">
+              <p className="text-white/70 text-sm">
+                本回合答對人數：{correctCount} / 3
+                {roundLocked && <span className="text-green-400 ml-2">✓ 已滿員</span>}
+              </p>
+            </div>
             <div className="flex gap-2">
               <button onClick={handleRevealAnswer} disabled={!currentSong} className="flex-1 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-xl">公布答案</button>
-              <button onClick={handleNextRound} className="flex-1 py-2 bg-white/20 hover:bg-white/30 text-white font-semibold rounded-xl">下一題</button>
+              <button 
+                onClick={handleNextRound} 
+                className={`flex-1 py-2 text-white font-semibold rounded-xl ${
+                  roundLocked || correctCount >= 3 
+                    ? 'bg-green-600 hover:bg-green-700' 
+                    : 'bg-white/20 hover:bg-white/30'
+                }`}
+              >
+                下一題
+              </button>
             </div>
+            {gameEnded && (
+              <button 
+                onClick={handleResetGame}
+                className="w-full mt-2 py-2 bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-600 hover:to-purple-700 text-white font-semibold rounded-xl"
+              >
+                再來一局
+              </button>
+            )}
           </div>
 
           <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-4">
@@ -360,6 +454,56 @@ function HostUI({ socket, onBack }) {
       </div>
 
       {correctToast && <div className="fixed top-20 left-1/2 -translate-x-1/2 z-20 px-6 py-3 bg-green-600/90 text-white font-bold rounded-xl shadow-lg">{correctToast}</div>}
+      
+      {/* 遊戲結束全屏排行榜 */}
+      {gameEnded && finalLeaderboard.length > 0 && (
+        <div className="fixed inset-0 z-50 bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-800 flex items-center justify-center p-6">
+          <div className="bg-white/10 backdrop-blur-xl rounded-3xl p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <h2 className="text-4xl font-bold text-white text-center mb-8">🎉 遊戲結束 🎉</h2>
+            <h3 className="text-2xl font-bold text-white text-center mb-6">最終排行榜</h3>
+            <div className="space-y-4 mb-6">
+              {finalLeaderboard.map(({ socketId, name, score, rank }) => (
+                <div 
+                  key={socketId} 
+                  className={`flex items-center justify-between p-4 rounded-xl ${
+                    rank === 1 
+                      ? 'bg-gradient-to-r from-yellow-500/30 to-amber-500/30 border-2 border-yellow-400' 
+                      : 'bg-white/10'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className={`text-2xl font-bold ${
+                      rank === 1 ? 'text-yellow-400' : 'text-white/70'
+                    }`}>
+                      #{rank}
+                    </span>
+                    <span className={`text-xl font-semibold ${
+                      rank === 1 ? 'text-yellow-300' : 'text-white'
+                    }`}>
+                      {rank === 1 && '👑 '}
+                      {name}
+                    </span>
+                  </div>
+                  <span className={`text-2xl font-bold ${
+                    rank === 1 ? 'text-yellow-400' : 'text-amber-400'
+                  }`}>
+                    {score} 分
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="text-center">
+              <p className="text-white/70 mb-4">等待主持人重新開始...</p>
+              <button 
+                onClick={handleResetGame}
+                className="px-8 py-3 bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-600 hover:to-purple-700 text-white font-semibold rounded-xl text-lg"
+              >
+                再來一局
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -372,9 +516,12 @@ function PlayerUI({ socket, onBack }) {
   const [playKey, setPlayKey] = useState(0)
   const [answerInput, setAnswerInput] = useState('')
   const [answerStatus, setAnswerStatus] = useState(null)
+  const [earnedPoints, setEarnedPoints] = useState(0)
   const [leaderboard, setLeaderboard] = useState([])
   const [correctToast, setCorrectToast] = useState(null)
   const [volume, setVolume] = useState(100)
+  const [gameEnded, setGameEnded] = useState(false)
+  const [finalLeaderboard, setFinalLeaderboard] = useState([])
   const playerRef = useRef(null)
   const shouldPlayRef = useRef(false)
   const endTimerRef = useRef(null)
@@ -426,16 +573,50 @@ function PlayerUI({ socket, onBack }) {
       setAnswerStatus(null)
       setPlayKey((k) => k + 1)
     }
-    const onAnswerResult = ({ correct }) => setAnswerStatus(correct ? 'correct' : 'wrong')
+    const onAnswerResult = ({ correct, points, message }) => {
+      if (correct) {
+        setAnswerStatus('correct')
+        setEarnedPoints(points || 0)
+        if (points) {
+          setCorrectToast(`答對了！獲得 ${points} 分`)
+          setTimeout(() => setCorrectToast(null), 3000)
+        }
+      } else {
+        setAnswerStatus('wrong')
+        setEarnedPoints(0)
+        if (message) {
+          setCorrectToast(message)
+          setTimeout(() => setCorrectToast(null), 3000)
+        }
+      }
+    }
     const onLeaderboard = (data) => setLeaderboard(Array.isArray(data) ? data : [])
-    const onCorrectBroadcast = ({ playerId, playerName }) => { if (playerId !== socket.id) { setCorrectToast(`${playerName} 答對了！`); setTimeout(() => setCorrectToast(null), 3000) } }
+    const onCorrectBroadcast = ({ playerId, playerName, points }) => { 
+      if (playerId !== socket.id) { 
+        setCorrectToast(`${playerName} 答對了！獲得 ${points || 0} 分`)
+        setTimeout(() => setCorrectToast(null), 3000) 
+      } 
+    }
     const onControl = (action) => {
       if (action === 'play') tryPlay(startTimeRef.current, endTimeRef.current)
       else if (action === 'pause' && playerRef.current) { clearEndTimer(); playerRef.current.pauseVideo?.() }
       else if (action === 'stop') { clearEndTimer(); setVideoId(null); setRevealedAnswer(null); setAnswerStatus(null); shouldPlayRef.current = false }
     }
     const onReveal = (songTitle) => setRevealedAnswer(songTitle || '')
-    const onNextRound = () => setAnswerStatus(null)
+    const onNextRound = () => {
+      setAnswerStatus(null)
+      setEarnedPoints(0)
+    }
+    const onGameEnded = ({ leaderboard }) => {
+      setGameEnded(true)
+      setFinalLeaderboard(Array.isArray(leaderboard) ? leaderboard : [])
+    }
+    const onGameReset = () => {
+      setGameEnded(false)
+      setFinalLeaderboard([])
+      setAnswerStatus(null)
+      setEarnedPoints(0)
+    }
 
     socket.on('game_state', onGameState)
     socket.on('play_song', onPlaySong)
@@ -445,6 +626,8 @@ function PlayerUI({ socket, onBack }) {
     socket.on('control_player', onControl)
     socket.on('reveal_answer', onReveal)
     socket.on('next_round', onNextRound)
+    socket.on('game_ended', onGameEnded)
+    socket.on('game_reset', onGameReset)
 
     return () => {
       socket.off('game_state', onGameState)
@@ -455,6 +638,8 @@ function PlayerUI({ socket, onBack }) {
       socket.off('control_player', onControl)
       socket.off('reveal_answer', onReveal)
       socket.off('next_round', onNextRound)
+      socket.off('game_ended', onGameEnded)
+      socket.off('game_reset', onGameReset)
     }
   }, [socket])
 
@@ -523,7 +708,12 @@ function PlayerUI({ socket, onBack }) {
             </div>
           )}
           {answerStatus === 'pending' && <p className="text-white/80">答案已送出，等待主持人判定...</p>}
-          {answerStatus === 'correct' && <div className="bg-green-500/30 rounded-2xl p-4 text-center"><p className="text-xl font-bold text-green-300">答對了！</p></div>}
+          {answerStatus === 'correct' && (
+            <div className="bg-green-500/30 rounded-2xl p-4 text-center">
+              <p className="text-xl font-bold text-green-300">答對了！</p>
+              {earnedPoints > 0 && <p className="text-lg font-semibold text-yellow-300 mt-2">獲得 {earnedPoints} 分</p>}
+            </div>
+          )}
           {answerStatus === 'wrong' && <p className="text-red-300">答錯囉，請再試一次</p>}
           {revealedAnswer && <div className="bg-white/20 backdrop-blur-xl rounded-2xl p-4 text-center"><p className="text-white/70 text-sm">答案</p><p className="text-xl font-bold text-amber-400">{revealedAnswer}</p></div>}
           {!videoId && <p className="text-white/60 text-center">等待主持人播放音樂...</p>}
@@ -541,6 +731,50 @@ function PlayerUI({ socket, onBack }) {
       </div>
 
       {correctToast && <div className="fixed top-20 left-1/2 -translate-x-1/2 z-20 px-6 py-3 bg-green-600/90 text-white font-bold rounded-xl shadow-lg">{correctToast}</div>}
+      
+      {/* 遊戲結束全屏排行榜 */}
+      {gameEnded && finalLeaderboard.length > 0 && (
+        <div className="fixed inset-0 z-50 bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-800 flex items-center justify-center p-6">
+          <div className="bg-white/10 backdrop-blur-xl rounded-3xl p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <h2 className="text-4xl font-bold text-white text-center mb-8">🎉 遊戲結束 🎉</h2>
+            <h3 className="text-2xl font-bold text-white text-center mb-6">最終排行榜</h3>
+            <div className="space-y-4 mb-6">
+              {finalLeaderboard.map(({ socketId, name, score, rank }) => (
+                <div 
+                  key={socketId} 
+                  className={`flex items-center justify-between p-4 rounded-xl ${
+                    rank === 1 
+                      ? 'bg-gradient-to-r from-yellow-500/30 to-amber-500/30 border-2 border-yellow-400' 
+                      : 'bg-white/10'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className={`text-2xl font-bold ${
+                      rank === 1 ? 'text-yellow-400' : 'text-white/70'
+                    }`}>
+                      #{rank}
+                    </span>
+                    <span className={`text-xl font-semibold ${
+                      rank === 1 ? 'text-yellow-300' : 'text-white'
+                    }`}>
+                      {rank === 1 && '👑 '}
+                      {name}
+                    </span>
+                  </div>
+                  <span className={`text-2xl font-bold ${
+                    rank === 1 ? 'text-yellow-400' : 'text-amber-400'
+                  }`}>
+                    {score} 分
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="text-center">
+              <p className="text-white/70 mb-4">等待主持人重新開始...</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
