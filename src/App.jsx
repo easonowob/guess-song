@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { io } from 'socket.io-client'
 import YouTube from 'react-youtube'
-import { QRCodeSVG } from 'qrcode.react'
 import { Music2, Play, Square, Pause, Monitor, User, Check, X, Send } from 'lucide-react'
 import { WaveformVisualizer } from './components/WaveformVisualizer'
 
@@ -108,6 +107,16 @@ function HostUI({ socket, onBack }) {
   const answeredThisRoundRef = useRef(new Set())
 
   useEffect(() => { songTitleRef.current = songTitle }, [songTitle])
+
+  useEffect(() => {
+    if (!socket) return
+    const onJoinError = ({ message }) => {
+      alert(message || '加入失敗')
+      onBack()
+    }
+    socket.on('join_error', onJoinError)
+    return () => { socket.off('join_error', onJoinError) }
+  }, [socket, onBack])
 
   useEffect(() => {
     if (!socket) return
@@ -298,140 +307,123 @@ function HostUI({ socket, onBack }) {
     playerVars: { autoplay: 0, mute: 0, controls: 1, playsinline: 1 },
   })
 
+  const joinUrl = typeof window !== 'undefined' ? window.location.href : ''
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-800 p-4">
-      <div className="flex justify-between items-center mb-4">
+      {/* 頂部導覽列：加入連結顯眼顯示 */}
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <button onClick={onBack} className="text-white/80 hover:text-white">← 返回</button>
-        <div className="flex items-center gap-2">
-          <button onClick={() => { previewPlayerRef.current?.unMute?.(); previewPlayerRef.current?.setVolume?.(100); previewPlayerRef.current?.playVideo?.() }} className="px-3 py-1.5 rounded-lg bg-white/20 hover:bg-white/30 text-white text-sm">🔊 測試聲音</button>
+        <div className="flex items-center gap-3 flex-1 min-w-0 justify-end">
+          <div className="flex items-center gap-2 py-2 px-3 rounded-xl bg-white/10 border border-white/20 flex-1 max-w-xl min-w-0">
+            <span className="text-white font-medium whitespace-nowrap">加入連結:</span>
+            <span className="text-white/95 truncate text-sm" title={joinUrl}>{joinUrl}</span>
+            <button onClick={() => navigator.clipboard?.writeText(joinUrl)} className="flex-shrink-0 px-4 py-2 rounded-lg bg-cyan-500/80 hover:bg-cyan-500 text-white font-medium">複製</button>
+          </div>
+          <button onClick={() => { previewPlayerRef.current?.unMute?.(); previewPlayerRef.current?.setVolume?.(100); previewPlayerRef.current?.playVideo?.() }} className="px-4 py-2 rounded-lg bg-white/20 hover:bg-white/30 text-white">🔊 測試聲音</button>
           <span className="text-cyan-400 font-bold flex items-center gap-2"><Monitor className="w-5 h-5" /> 主持人</span>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.2fr] gap-4 lg:gap-6 max-w-7xl mx-auto">
-        {/* 左欄：操作區 */}
-        <div className="space-y-4 overflow-y-auto">
-          <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-4">
-            <h3 className="text-white font-semibold mb-3">遊戲設定</h3>
-            <div className="mb-4">
-              <label className="text-white/70 text-sm block mb-2">總題數</label>
-              <input 
-                type="number" 
-                min="1" 
-                value={totalRounds} 
-                onChange={(e) => handleSetTotalRounds(e.target.value)}
-                className="w-full px-4 py-2 rounded-xl bg-white/20 text-white placeholder-white/50 border border-white/20"
-              />
-              <p className="text-white/60 text-xs mt-1">目前第 {currentRound} / {totalRounds} 題</p>
-            </div>
-          </div>
-
-          <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-4">
-            <h3 className="text-white font-semibold mb-3">加入遊戲 QR Code</h3>
-            <div className="flex flex-col sm:flex-row items-center gap-4 mb-4">
-              <div className="bg-white p-3 rounded-xl">
-                <QRCodeSVG value={typeof window !== 'undefined' ? window.location.href : ''} size={128} level="M" />
-              </div>
-              <div className="flex-1 text-center sm:text-left">
-                <p className="text-white font-medium mb-1">掃描加入遊戲</p>
-                <p className="text-white/70 text-sm break-all">{typeof window !== 'undefined' ? window.location.href : ''}</p>
-                <button onClick={() => navigator.clipboard?.writeText(window.location.href)} className="mt-2 text-cyan-400 text-sm hover:underline">複製網址</button>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-4">
-            <h3 className="text-white font-semibold mb-3">YouTube 影片</h3>
-            <input type="text" value={videoId} onChange={(e) => setVideoId(e.target.value)} placeholder="貼上網址或 ID" className="w-full px-4 py-2 rounded-xl bg-white/20 text-white placeholder-white/50 border border-white/20 mb-2" />
-            <input type="text" value={songTitle} onChange={(e) => setSongTitle(e.target.value)} placeholder="歌名 (Correct Answer，用於自動對答案)" className="w-full px-4 py-2 rounded-xl bg-white/20 text-white placeholder-white/50 border border-white/20 mb-2" />
-            {/* 已移除範例歌曲按鈕區塊 */}
-          </div>
-
-          <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-4">
-            <h3 className="text-white font-semibold mb-3">播放片段</h3>
-            <p className="text-white/60 text-sm mb-2">播放時將同步右側影片進度</p>
-            <div className="space-y-3 mb-3">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 max-w-7xl mx-auto">
+        {/* 左欄 (操作區)：由上而下 = 播放控制 → 答案控制 → 遊戲設定 */}
+        <div className="flex flex-col gap-5 overflow-y-auto">
+          {/* 1. 播放控制區 [最上方] */}
+          <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-5">
+            <h3 className="text-white font-semibold mb-3">播放控制</h3>
+            <div className="space-y-4">
               <div>
-                <label className="text-white/70 text-sm block mb-1">開始</label>
-                <div className="flex items-center gap-2">
-                  <input type="number" min="0" inputMode="numeric" value={startMin} onChange={(e) => setStartMin((e.target.value.replace(/\D/g, '') || '0'))} className="w-16 px-2 py-2 rounded-lg bg-white/20 text-white text-center" placeholder="0" />
-                  <span className="text-white/80">分</span>
-                  <span className="text-white/60">:</span>
-                  <input type="number" min="0" inputMode="numeric" value={startSec} onChange={(e) => setStartSec((e.target.value.replace(/\D/g, '') || '0'))} className="w-16 px-2 py-2 rounded-lg bg-white/20 text-white text-center" placeholder="00" />
-                  <span className="text-white/80">秒</span>
+                <label className="text-white/70 text-sm block mb-2">YouTube 影片</label>
+                <input type="text" value={videoId} onChange={(e) => setVideoId(e.target.value)} placeholder="貼上網址或 ID" className="w-full px-4 py-3 rounded-xl bg-white/20 text-white placeholder-white/50 border border-white/20" />
+              </div>
+              <div>
+                <label className="text-white/70 text-sm block mb-2">歌名（正確答案）</label>
+                <input type="text" value={songTitle} onChange={(e) => setSongTitle(e.target.value)} placeholder="歌名" className="w-full px-4 py-3 rounded-xl bg-white/20 text-white placeholder-white/50 border border-white/20" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-white/70 text-sm block mb-2">開始時間</label>
+                  <div className="flex items-center gap-2">
+                    <input type="number" min="0" inputMode="numeric" value={startMin} onChange={(e) => setStartMin((e.target.value.replace(/\D/g, '') || '0'))} className="w-14 px-2 py-3 rounded-lg bg-white/20 text-white text-center" />
+                    <span className="text-white/80">分</span>
+                    <input type="number" min="0" inputMode="numeric" value={startSec} onChange={(e) => setStartSec((e.target.value.replace(/\D/g, '') || '0'))} className="w-14 px-2 py-3 rounded-lg bg-white/20 text-white text-center" />
+                    <span className="text-white/80">秒</span>
+                  </div>
                 </div>
-              </div>
-              <div>
-                <label className="text-white/70 text-sm block mb-1">結束 (0:00 = 不限制)</label>
-                <div className="flex items-center gap-2">
-                  <input type="number" min="0" inputMode="numeric" value={endMin} onChange={(e) => setEndMin((e.target.value.replace(/\D/g, '') || '0'))} className="w-16 px-2 py-2 rounded-lg bg-white/20 text-white text-center" placeholder="0" />
-                  <span className="text-white/80">分</span>
-                  <span className="text-white/60">:</span>
-                  <input type="number" min="0" inputMode="numeric" value={endSec} onChange={(e) => setEndSec((e.target.value.replace(/\D/g, '') || '0'))} className="w-16 px-2 py-2 rounded-lg bg-white/20 text-white text-center" placeholder="00" />
-                  <span className="text-white/80">秒</span>
+                <div>
+                  <label className="text-white/70 text-sm block mb-2">結束 (0:00=不限制)</label>
+                  <div className="flex items-center gap-2">
+                    <input type="number" min="0" inputMode="numeric" value={endMin} onChange={(e) => setEndMin((e.target.value.replace(/\D/g, '') || '0'))} className="w-14 px-2 py-3 rounded-lg bg-white/20 text-white text-center" />
+                    <span className="text-white/80">分</span>
+                    <input type="number" min="0" inputMode="numeric" value={endSec} onChange={(e) => setEndSec((e.target.value.replace(/\D/g, '') || '0'))} className="w-14 px-2 py-3 rounded-lg bg-white/20 text-white text-center" />
+                    <span className="text-white/80">秒</span>
+                  </div>
                 </div>
               </div>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <button onClick={handlePlay} disabled={!extractVideoId(videoId)} className="flex-1 min-w-[80px] py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-xl flex items-center justify-center gap-1"><Play className="w-4 h-4" /> 播放</button>
-              <button onClick={handlePlay5Sec} disabled={!extractVideoId(videoId)} className="flex-1 min-w-[80px] py-2 bg-amber-600 hover:bg-amber-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-xl flex items-center justify-center gap-1">⚡ 只播 5 秒</button>
-              <button onClick={handlePause} disabled={!isPlaying} className="py-2 px-4 bg-amber-700 hover:bg-amber-800 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-xl flex items-center gap-1"><Pause className="w-4 h-4" /> 暫停</button>
-              <button onClick={handleStop} className="py-2 px-4 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-xl flex items-center gap-1"><Square className="w-4 h-4" /> 停止</button>
+            <div className="flex flex-wrap gap-3 mt-4">
+              <button onClick={handlePlay} disabled={!extractVideoId(videoId)} className="flex-1 min-w-[100px] py-3 px-4 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-xl flex items-center justify-center gap-2 text-base"><Play className="w-5 h-5" /> 播放</button>
+              <button onClick={handlePlay5Sec} disabled={!extractVideoId(videoId)} className="flex-1 min-w-[100px] py-3 px-4 bg-amber-600 hover:bg-amber-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-xl flex items-center justify-center gap-2 text-base">⚡ 5 秒</button>
+              <button onClick={handlePause} disabled={!isPlaying} className="py-3 px-4 bg-amber-700 hover:bg-amber-800 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-xl flex items-center gap-2 text-base"><Pause className="w-5 h-5" /> 暫停</button>
+              <button onClick={handleStop} className="py-3 px-4 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-xl flex items-center gap-2 text-base"><Square className="w-5 h-5" /> 停止</button>
+              <button onClick={() => { previewPlayerRef.current?.unMute?.(); previewPlayerRef.current?.setVolume?.(100); previewPlayerRef.current?.playVideo?.() }} className="py-3 px-4 bg-white/20 hover:bg-white/30 text-white font-semibold rounded-xl flex items-center gap-2 text-base">🔊 測試聲音</button>
             </div>
-          </div>
-
-          <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-4">
-            <h3 className="text-white font-semibold mb-2">答案控制</h3>
-            <div className="mb-2">
-              <p className="text-white/70 text-sm">
-                本回合答對人數：{correctCount} / 3
-                {roundLocked && <span className="text-green-400 ml-2">✓ 已滿員</span>}
-              </p>
-            </div>
-            <div className="flex gap-2">
-              <button onClick={handleRevealAnswer} disabled={!currentSong} className="flex-1 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-xl">公布答案</button>
+            <div className="flex flex-wrap gap-3 mt-3">
+              <button onClick={handleRevealAnswer} disabled={!currentSong} className="flex-1 py-3 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-xl text-base">公布答案</button>
               <button 
                 onClick={handleNextRound} 
-                className={`flex-1 py-2 text-white font-semibold rounded-xl ${
-                  roundLocked || correctCount >= 3 
-                    ? 'bg-green-600 hover:bg-green-700' 
-                    : 'bg-white/20 hover:bg-white/30'
+                className={`flex-1 py-3 text-white font-semibold rounded-xl text-base ${
+                  roundLocked || correctCount >= 3 ? 'bg-green-600 hover:bg-green-700' : 'bg-white/20 hover:bg-white/30'
                 }`}
               >
                 下一題
               </button>
+              {gameEnded && (
+                <button onClick={handleResetGame} className="w-full py-3 bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-600 hover:to-purple-700 text-white font-semibold rounded-xl text-base">再來一局</button>
+              )}
             </div>
-            {gameEnded && (
-              <button 
-                onClick={handleResetGame}
-                className="w-full mt-2 py-2 bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-600 hover:to-purple-700 text-white font-semibold rounded-xl"
-              >
-                再來一局
-              </button>
-            )}
           </div>
 
-          <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-4">
-            <h3 className="text-white font-semibold mb-2">搶答區</h3>
-            {pendingAnswers.length === 0 ? <p className="text-white/60 text-sm">等待玩家送出答案...</p> : (
+          {/* 2. 答案控制區 [中間] */}
+          <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-5">
+            <h3 className="text-white font-semibold mb-3">答案控制</h3>
+            <p className="text-white/70 text-sm mb-3">本回合答對人數：{correctCount} / 3 {roundLocked && <span className="text-green-400">✓ 已滿員</span>}</p>
+            {pendingAnswers.length === 0 ? (
+              <p className="text-white/60 text-sm">等待玩家送出答案...</p>
+            ) : (
               <div className="space-y-2 max-h-40 overflow-y-auto">
                 {pendingAnswers.map(({ socketId, answer, playerName }) => (
-                  <div key={socketId} className="flex items-center justify-between gap-2 p-2 rounded-xl bg-white/10">
+                  <div key={socketId} className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-white/10">
                     <p className="text-white truncate flex-1 text-sm">{playerName}：{answer}</p>
                     <div className="flex gap-1 flex-shrink-0">
-                      <button onClick={() => handleAnswerCorrect(socketId)} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm flex items-center gap-0.5"><Check className="w-3 h-3" /> 正確</button>
-                      <button onClick={() => handleAnswerWrong(socketId)} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm flex items-center gap-0.5"><X className="w-3 h-3" /> 錯誤</button>
+                      <button onClick={() => handleAnswerCorrect(socketId)} className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm flex items-center gap-0.5"><Check className="w-3 h-3" /> 正確</button>
+                      <button onClick={() => handleAnswerWrong(socketId)} className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm flex items-center gap-0.5"><X className="w-3 h-3" /> 錯誤</button>
                     </div>
                   </div>
                 ))}
               </div>
             )}
           </div>
+
+          {/* 3. 遊戲設定 [最下方] */}
+          <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-5">
+            <h3 className="text-white font-semibold mb-3">遊戲設定</h3>
+            <label className="text-white/70 text-sm block mb-2">總題數</label>
+            <input 
+              type="number" 
+              min="1" 
+              value={totalRounds} 
+              onChange={(e) => handleSetTotalRounds(e.target.value)}
+              className="w-full px-4 py-3 rounded-xl bg-white/20 text-white placeholder-white/50 border border-white/20"
+            />
+            <p className="text-white/60 text-sm mt-2">目前第 {currentRound} / {totalRounds} 題</p>
+          </div>
         </div>
 
-        {/* 右欄：監控區 */}
-        <div className="flex flex-col gap-4 min-h-0">
-          <div className="bg-black/30 rounded-2xl overflow-hidden flex-1 min-h-[280px]" style={{ width: '100%', opacity: 1, pointerEvents: 'auto', display: 'block' }}>
+        {/* 右欄 (視覺與資訊區)：由上而下 = 影片播放器 → 排行榜 */}
+        <div className="flex flex-col gap-5">
+          {/* 1. YouTube 影片播放器 [右欄上方] */}
+          <div className="w-full rounded-2xl overflow-hidden bg-black/30 aspect-video">
             {extractVideoId(videoId) ? (
               <YouTube
                 videoId={extractVideoId(videoId)}
@@ -442,12 +434,21 @@ function HostUI({ socket, onBack }) {
               <div className="w-full h-full flex items-center justify-center text-white/50">輸入影片並播放</div>
             )}
           </div>
-          <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-4 flex-shrink-0" style={{ maxHeight: 240 }}>
-            <h3 className="text-white font-semibold mb-2">即時排行榜</h3>
-            <div className="overflow-y-auto space-y-1" style={{ maxHeight: 180 }}>
-              {leaderboard.length === 0 ? <p className="text-white/60 text-sm">尚無玩家</p> : leaderboard.map(({ socketId, name, score, rank }) => (
-                <div key={socketId} className="flex justify-between text-white text-sm"><span>#{rank} {name}</span><span className="text-amber-400 font-bold">{score} 分</span></div>
-              ))}
+
+          {/* 2. 排行榜與玩家列表 [右欄下方] */}
+          <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-5 flex flex-col min-h-0 flex-1">
+            <h3 className="text-white font-semibold mb-3">即時排行榜 · 玩家列表</h3>
+            <div className="overflow-y-auto space-y-2 pr-1 h-[400px]">
+              {leaderboard.length === 0 ? (
+                <p className="text-white/60 text-sm">尚無玩家</p>
+              ) : (
+                leaderboard.map(({ socketId, name, score, rank }) => (
+                  <div key={socketId} className="flex justify-between items-center py-3 px-4 rounded-xl bg-white/5 hover:bg-white/10 text-white text-base">
+                    <span className="font-medium">#{rank} {name}</span>
+                    <span className="text-amber-400 font-bold">{score} 分</span>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>

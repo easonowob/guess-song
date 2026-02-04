@@ -54,6 +54,10 @@ io.on('connection', (socket) => {
     const playerName = (typeof payload === 'object' && payload?.playerName?.trim?.()) || null
 
     if (role === 'host') {
+      if (gameState.hostId !== null && gameState.hostId !== socket.id) {
+        socket.emit('join_error', { message: '遊戲已經有主持人了！' })
+        return
+      }
       gameState.hostId = socket.id
       socket.emit('join_confirmed', { role: 'host' })
       socket.emit('game_state', gameState)
