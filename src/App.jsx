@@ -1,8 +1,27 @@
 import { useState, useEffect, useRef } from 'react'
 import { io } from 'socket.io-client'
 import YouTube from 'react-youtube'
-import { Music2, Play, Square, Pause, Monitor, User, Check, X, Send, ExternalLink, LogOut, Maximize2 } from 'lucide-react'
-import { WaveformVisualizer } from './components/WaveformVisualizer'
+import { Music2, Play, Square, Pause, Monitor, User, Check, X, Send, LogOut, Maximize2, Clock } from 'lucide-react'
+
+// --- 內建的波形圖元件 ---
+function WaveformVisualizer() {
+  return (
+    <div className="flex items-center justify-center gap-1.5 h-full w-full">
+      {[...Array(8)].map((_, i) => (
+        <div
+          key={i}
+          className="w-3 bg-cyan-400/80 rounded-full animate-pulse"
+          style={{
+            height: `${Math.random() * 40 + 20}%`,
+            animationDuration: `${0.6 + i * 0.1}s`,
+            animationIterationCount: 'infinite'
+          }}
+        />
+      ))}
+    </div>
+  )
+}
+// -----------------------
 
 const SOCKET_URL = window.location.origin
 
@@ -13,7 +32,6 @@ function unlockAudio() {
   } catch (_) {}
 }
 
-/** 測試聲音：播放 1–2 秒簡短悅耳提示音 (Web Audio) */
 function playTestSoundBeep() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)()
@@ -30,7 +48,6 @@ function playTestSoundBeep() {
   } catch (_) {}
 }
 
-/** 進入全螢幕 */
 function requestFullscreen() {
   const el = document.documentElement
   if (el.requestFullscreen) el.requestFullscreen()
@@ -111,7 +128,7 @@ function PlayerJoinScreen({ socket, onJoined, onBack }) {
   )
 }
 
-const TIMELINE_MAX_SEC = 600 // 10 分鐘
+const TIMELINE_MAX_SEC = 600
 
 function HostUI({ socket, onBack }) {
   const [videoId, setVideoId] = useState('')
@@ -206,6 +223,13 @@ function HostUI({ socket, onBack }) {
     socket.on('round_status_update', onRoundStatusUpdate)
     socket.on('game_ended', onGameEnded)
     socket.on('game_reset', onGameReset)
+    const onStopGame = () => {
+      clearTimers()
+      setIsPlaying(false)
+      setCurrentSong(null)
+      previewPlayerRef.current?.stopVideo?.()
+    }
+    socket.on('stop_game', onStopGame)
     return () => {
       socket.off('player_submitted_answer', onSubmitted)
       socket.off('update_leaderboard', onLeaderboard)
@@ -215,6 +239,7 @@ function HostUI({ socket, onBack }) {
       socket.off('round_status_update', onRoundStatusUpdate)
       socket.off('game_ended', onGameEnded)
       socket.off('game_reset', onGameReset)
+      socket.off('stop_game', onStopGame)
     }
   }, [socket])
 
@@ -225,14 +250,7 @@ function HostUI({ socket, onBack }) {
     durationTimerRef.current = null
   }
 
-  const getStartTimeFromSliderOrVideo = () => {
-    if (previewPlayerRef.current) {
-      const t = Math.floor(previewPlayerRef.current.getCurrentTime?.() || 0)
-      setStartTimeSeconds(t)
-      return t
-    }
-    return startTimeSeconds
-  }
+  const getStartTimeFromSlider = () => startTimeSeconds
 
   const handlePlayWithDuration = (durationSec) => {
     setPendingAnswers([])
@@ -242,7 +260,7 @@ function HostUI({ socket, onBack }) {
     clearTimers()
     const id = extractVideoId(videoId)
     if (!id) return
-    const st = getStartTimeFromSliderOrVideo()
+    const st = getStartTimeFromSlider()
     const et = st + durationSec
     socket.emit('play_song', { videoId: id, songTitle: songTitle.trim(), startTime: st, endTime: et })
     setCurrentSong({ videoId: id, songTitle: songTitle.trim() })
@@ -253,9 +271,7 @@ function HostUI({ socket, onBack }) {
     }, durationSec * 1000)
   }
 
-  const handlePlay5Sec = () => handlePlayWithDuration(5)
   const handlePlay10Sec = () => handlePlayWithDuration(10)
-  const handlePlay15Sec = () => handlePlayWithDuration(15)
   const handlePlayCustom = () => handlePlayWithDuration(Math.max(1, Math.min(120, customDurationSec)))
 
   const handlePause = () => {
@@ -266,9 +282,10 @@ function HostUI({ socket, onBack }) {
 
   const handleStop = () => {
     clearTimers()
-    socket.emit('control_player', 'stop')
+    socket.emit('stop_game')
     setIsPlaying(false)
     setCurrentSong(null)
+    previewPlayerRef.current?.stopVideo?.()
   }
 
   const handleRevealAnswer = () => socket.emit('reveal_answer', songTitle.trim() || undefined)
@@ -285,11 +302,10 @@ function HostUI({ socket, onBack }) {
     setCurrentSong(null);
   }
 
-  const syncSliderFromVideo = () => {
-    if (previewPlayerRef.current) {
-      const t = Math.floor(previewPlayerRef.current.getCurrentTime?.() || 0)
-      setStartTimeSeconds(Math.min(t, TIMELINE_MAX_SEC))
-    }
+  const handleSliderChange = (e) => {
+    const sec = Number(e.target.value)
+    setStartTimeSeconds(sec)
+    previewPlayerRef.current?.seekTo?.(sec)
   }
 
   const handleSetTotalRounds = (value) => {
@@ -306,12 +322,11 @@ function HostUI({ socket, onBack }) {
 
   const handleAnswerCorrect = (playerId) => { socket.emit('answer_correct', { playerId }); setPendingAnswers((prev) => prev.filter((a) => a.socketId !== playerId)) }
   const handleAnswerWrong = (playerId) => { socket.emit('answer_wrong', { playerId }); setPendingAnswers((prev) => prev.filter((a) => a.socketId !== playerId)) }
-  // 已移除 pickExample 函式
-
-  const hostYoutubeOpts = (id) => ({
-    height: '360',
+  
+  const hostYoutubeOpts = () => ({
+    height: '100%',
     width: '100%',
-    playerVars: { autoplay: 0, mute: 0, controls: 1, playsinline: 1 },
+    playerVars: { autoplay: 0, mute: 0, controls: 1, playsinline: 1, disablekb: 0 },
   })
 
   const joinUrl = typeof window !== 'undefined' ? window.location.href : ''
@@ -323,7 +338,7 @@ function HostUI({ socket, onBack }) {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-800 p-4">
-      {/* 頂部導覽列：加入連結、結束遊戲、測試聲音 */}
+      {/* 頂部導覽列 */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div className="flex items-center gap-2">
           <button onClick={onBack} className="text-white/80 hover:text-white">← 返回</button>
@@ -343,10 +358,10 @@ function HostUI({ socket, onBack }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 max-w-7xl mx-auto">
-        {/* 左欄 (操作區)：由上而下 = 播放控制 → 答案控制 → 遊戲設定 */}
-        <div className="flex flex-col gap-5 overflow-y-auto">
-          {/* 1. 播放控制區 [最上方] */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 max-w-7xl mx-auto min-h-0">
+        {/* 左欄 (操作區) */}
+        <div className="flex flex-col gap-5 overflow-y-auto min-w-0">
+          {/* 1. 播放控制區 */}
           <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-5">
             <h3 className="text-white font-semibold mb-3">播放控制</h3>
             <div className="space-y-4">
@@ -367,28 +382,64 @@ function HostUI({ socket, onBack }) {
                     min={0}
                     max={TIMELINE_MAX_SEC}
                     value={startTimeSeconds}
-                    onChange={(e) => setStartTimeSeconds(Number(e.target.value))}
-                    onMouseUp={syncSliderFromVideo}
-                    onTouchEnd={syncSliderFromVideo}
+                    onChange={handleSliderChange}
                     className="flex-1 h-3 rounded-lg accent-cyan-500"
                   />
                   <span className="text-white/60 text-xs w-10">10:00</span>
                 </div>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <button onClick={handlePlay5Sec} disabled={!extractVideoId(videoId)} className="py-3 px-4 bg-amber-600 hover:bg-amber-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-xl text-base">播放 5 秒</button>
-                <button onClick={handlePlay10Sec} disabled={!extractVideoId(videoId)} className="py-3 px-4 bg-amber-600 hover:bg-amber-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-xl text-base">播放 10 秒</button>
-                <button onClick={handlePlay15Sec} disabled={!extractVideoId(videoId)} className="py-3 px-4 bg-amber-600 hover:bg-amber-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-xl text-base">播放 15 秒</button>
-                <div className="flex items-center gap-2">
-                  <input type="number" min={1} max={120} value={customDurationSec} onChange={(e) => setCustomDurationSec(Math.max(1, Math.min(120, parseInt(e.target.value, 10) || 30)))} className="w-14 px-2 py-2 rounded-lg bg-white/20 text-white text-center text-sm" />
-                  <span className="text-white/80 text-sm">秒</span>
-                  <button onClick={handlePlayCustom} disabled={!extractVideoId(videoId)} className="py-3 px-4 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-xl text-base">自訂長度</button>
+              
+              {/* 播放控制按鈕區：使用 Grid System 優化比例 */}
+              <div className="grid grid-cols-12 gap-2">
+                {/* 1. 播放 10 秒 (佔 3/12) */}
+                <button 
+                  onClick={handlePlay10Sec} 
+                  disabled={!extractVideoId(videoId)} 
+                  className="col-span-3 py-3 bg-amber-600 hover:bg-amber-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-xl text-base flex items-center justify-center gap-1"
+                >
+                  <Play className="w-4 h-4" /> 10秒
+                </button>
+
+                {/* 2. 自訂長度群組 (佔 5/12) */}
+                <div className="col-span-5 flex bg-white/10 rounded-xl p-1 gap-1">
+                  <input 
+                    type="number" 
+                    min={1} 
+                    max={120} 
+                    value={customDurationSec} 
+                    onChange={(e) => setCustomDurationSec(Math.max(1, Math.min(120, parseInt(e.target.value, 10) || 30)))} 
+                    className="w-12 px-1 text-center bg-transparent text-white font-bold border-none outline-none focus:ring-0"
+                  />
+                  <span className="text-white/60 text-sm flex items-center">秒</span>
+                  <button 
+                    onClick={handlePlayCustom} 
+                    disabled={!extractVideoId(videoId)} 
+                    className="flex-1 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-lg text-sm"
+                  >
+                    播放
+                  </button>
                 </div>
+
+                {/* 3. 暫停 (佔 2/12) */}
+                <button 
+                  onClick={handlePause} 
+                  disabled={!isPlaying} 
+                  className="col-span-2 py-3 bg-white/20 hover:bg-white/30 disabled:opacity-30 disabled:cursor-not-allowed text-white font-semibold rounded-xl flex items-center justify-center"
+                  title="暫停"
+                >
+                  <Pause className="w-5 h-5" />
+                </button>
+
+                {/* 4. 停止 (佔 2/12) */}
+                <button 
+                  onClick={handleStop} 
+                  className="col-span-2 py-3 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-xl flex items-center justify-center"
+                  title="停止"
+                >
+                  <Square className="w-5 h-5" />
+                </button>
               </div>
-              <div className="flex flex-wrap gap-3">
-                <button onClick={handlePause} disabled={!isPlaying} className="py-3 px-4 bg-amber-700 hover:bg-amber-800 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-xl text-base"><Pause className="w-5 h-5" /> 暫停</button>
-                <button onClick={handleStop} className="py-3 px-4 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-xl text-base"><Square className="w-5 h-5" /> 停止</button>
-              </div>
+
             </div>
             <div className="flex flex-wrap gap-3 mt-3">
               <button onClick={handleRevealAnswer} disabled={!currentSong} className="flex-1 py-3 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-xl text-base">公布答案</button>
@@ -406,7 +457,7 @@ function HostUI({ socket, onBack }) {
             </div>
           </div>
 
-          {/* 2. 答案控制區 [中間] */}
+          {/* 2. 答案控制區 */}
           <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-5">
             <h3 className="text-white font-semibold mb-3">答案控制</h3>
             <p className="text-white/70 text-sm mb-3">本回合答對人數：{correctCount} / 3 {roundLocked && <span className="text-green-400">✓ 已滿員</span>}</p>
@@ -414,9 +465,14 @@ function HostUI({ socket, onBack }) {
               <p className="text-white/60 text-sm">等待玩家送出答案...</p>
             ) : (
               <div className="space-y-2 max-h-40 overflow-y-auto">
-                {pendingAnswers.map(({ socketId, answer, playerName }) => (
+                {pendingAnswers.map(({ socketId, answer, playerName }, index) => (
                   <div key={socketId} className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-white/10">
-                    <p className="text-white truncate flex-1 text-sm">{playerName}：{answer}</p>
+                    <p className="text-white flex-1 text-sm min-w-0">
+                      {/* 搶答順序顯示區 */}
+                      <span className="font-bold text-red-400 mr-2 text-lg">#{index + 1}</span>
+                      <span className="font-semibold text-cyan-300">{playerName}</span>
+                      <span className="text-white/90">：{answer || '(空白)'}</span>
+                    </p>
                     <div className="flex gap-1 flex-shrink-0">
                       <button onClick={() => handleAnswerCorrect(socketId)} className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm flex items-center gap-0.5"><Check className="w-3 h-3" /> 正確</button>
                       <button onClick={() => handleAnswerWrong(socketId)} className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm flex items-center gap-0.5"><X className="w-3 h-3" /> 錯誤</button>
@@ -427,7 +483,7 @@ function HostUI({ socket, onBack }) {
             )}
           </div>
 
-          {/* 3. 遊戲設定 [最下方] */}
+          {/* 3. 遊戲設定 */}
           <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-5">
             <h3 className="text-white font-semibold mb-3">遊戲設定</h3>
             <label className="text-white/70 text-sm block mb-2">總題數</label>
@@ -442,22 +498,24 @@ function HostUI({ socket, onBack }) {
           </div>
         </div>
 
-        {/* 右欄 (視覺與資訊區)：由上而下 = 影片播放器 → 排行榜 */}
-        <div className="flex flex-col gap-5">
-          {/* 1. YouTube 影片播放器 [右欄上方] */}
-          <div className="w-full rounded-2xl overflow-hidden bg-black/30 aspect-video">
+        {/* 右欄 (視覺與資訊區) */}
+        <div className="flex flex-col gap-5 min-w-0 flex-1">
+          {/* HOST: 強制 16:9 且絕對滿版 (CSS 暴力修正) */}
+          <div className="relative w-full aspect-video bg-black overflow-hidden rounded-2xl shadow-lg">
             {extractVideoId(videoId) ? (
               <YouTube
                 videoId={extractVideoId(videoId)}
+                className="absolute top-0 left-0 w-full h-full"
+                iframeClassName="w-full h-full object-cover"
                 opts={hostYoutubeOpts()}
-                onReady={(e) => { const p = e.target; previewPlayerRef.current = p; p.unMute?.(); p.setVolume?.(100) }}
+                onReady={(e) => { const p = e.target; previewPlayerRef.current = p; p.setVolume?.(100) }}
               />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-white/50">輸入影片並播放</div>
             )}
           </div>
 
-          {/* 2. 排行榜與玩家列表 [右欄下方] */}
+          {/* 排行榜 */}
           <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-5 flex flex-col min-h-0 flex-1">
             <h3 className="text-white font-semibold mb-3">即時排行榜 · 玩家列表</h3>
             <div className="overflow-y-auto space-y-2 pr-1 h-[400px]">
@@ -626,15 +684,31 @@ function PlayerUI({ socket, onBack }) {
     const onControl = (action) => {
       if (action === 'play') tryPlay(startTimeRef.current, endTimeRef.current)
       else if (action === 'pause' && playerRef.current) { clearEndTimer(); playerRef.current.pauseVideo?.() }
-      else if (action === 'stop') { clearEndTimer(); setVideoId(null); setRevealedAnswer(null); setAnswerStatus(null); shouldPlayRef.current = false }
+      else if (action === 'stop') {
+        clearEndTimer()
+        setVideoId(null)
+        setRevealedAnswer(null)
+        setAnswerStatus(null)
+        shouldPlayRef.current = false
+        playerRef.current?.stopVideo?.()
+      }
     }
     const onReveal = (songTitle) => {
-    setRevealedAnswer(songTitle || '')
-    if (playerRef.current && startTimeRef.current != null) {
-      playerRef.current.seekTo?.(startTimeRef.current)
-      playerRef.current.playVideo?.()
+      setRevealedAnswer(songTitle || '')
+      if (playerRef.current && startTimeRef.current != null) {
+        playerRef.current.unMute?.()
+        playerRef.current.seekTo?.(startTimeRef.current)
+        playerRef.current.playVideo?.()
+      }
     }
-  }
+    const onStopGame = () => {
+      clearEndTimer()
+      setVideoId(null)
+      setRevealedAnswer(null)
+      setAnswerStatus(null)
+      shouldPlayRef.current = false
+      playerRef.current?.stopVideo?.()
+    }
     const onNextRound = () => {
       setAnswerStatus(null)
       setEarnedPoints(0)
@@ -657,6 +731,7 @@ function PlayerUI({ socket, onBack }) {
     socket.on('answer_correct_broadcast', onCorrectBroadcast)
     socket.on('control_player', onControl)
     socket.on('reveal_answer', onReveal)
+    socket.on('stop_game', onStopGame)
     socket.on('next_round', onNextRound)
     socket.on('game_ended', onGameEnded)
     socket.on('game_reset', onGameReset)
@@ -669,6 +744,7 @@ function PlayerUI({ socket, onBack }) {
       socket.off('answer_correct_broadcast', onCorrectBroadcast)
       socket.off('control_player', onControl)
       socket.off('reveal_answer', onReveal)
+      socket.off('stop_game', onStopGame)
       socket.off('next_round', onNextRound)
       socket.off('game_ended', onGameEnded)
       socket.off('game_reset', onGameReset)
@@ -687,6 +763,7 @@ function PlayerUI({ socket, onBack }) {
 
   const playerYouTubeStyle = { position: 'absolute', width: '1px', height: '1px', opacity: 0.01, pointerEvents: 'none', overflow: 'hidden', left: -9999 }
   const playerYoutubeOpts = { height: '1', width: '1', playerVars: { autoplay: 0, mute: 0, controls: 0, playsinline: 1 } }
+  // Player 顯示的 opts: 寬高 100%
   const visibleYoutubeOpts = { height: '100%', width: '100%', playerVars: { autoplay: 1, mute: 0, controls: 1, playsinline: 1 } }
   const youtubeWatchUrl = videoId ? `https://www.youtube.com/watch?v=${videoId}` : ''
 
@@ -730,41 +807,37 @@ function PlayerUI({ socket, onBack }) {
             {myRank != null && <p className="text-cyan-400 font-bold">目前排名：第 {myRank} 名</p>}
           </div>
 
-          {/* 中央 16:9 顯示區：猜題時為波形，揭曉後為 YouTube */}
-          <div className="w-full max-w-3xl mx-auto rounded-2xl overflow-hidden bg-black/40 aspect-video relative">
+          {/* PLAYER: 強制 16:9 且絕對滿版 (CSS 暴力修正) */}
+          <div className="relative w-full max-w-3xl mx-auto aspect-video bg-black overflow-hidden rounded-2xl shadow-lg">
             {!videoId && (
               <div className="w-full h-full flex items-center justify-center text-white/60">等待主持人播放音樂...</div>
             )}
             {videoId && !revealedAnswer && (
-              <div className="w-full h-full flex items-center justify-center">
+              <div className="absolute inset-0 w-full h-full flex items-center justify-center">
                 <WaveformVisualizer />
               </div>
             )}
             {videoId && revealedAnswer && (
-              <div className="absolute inset-0 w-full h-full">
-                <YouTube
-                  key={`reveal-${playKey}`}
-                  videoId={videoId}
-                  opts={visibleYoutubeOpts}
-                  onReady={(e) => {
-                    const p = e.target
-                    p.unMute?.()
-                    p.setVolume?.(volume)
-                    p.seekTo?.(startTimeRef.current ?? 0)
-                    p.playVideo?.()
-                  }}
-                />
-              </div>
+              <YouTube
+                key={`reveal-${playKey}`}
+                videoId={videoId}
+                className="absolute top-0 left-0 w-full h-full"
+                iframeClassName="w-full h-full object-cover"
+                opts={visibleYoutubeOpts}
+                onReady={(e) => {
+                  const p = e.target
+                  p.unMute?.()
+                  p.setVolume?.(volume)
+                  p.seekTo?.(startTimeRef.current ?? 0)
+                  p.playVideo?.()
+                }}
+              />
             )}
           </div>
+          
+          {/* Fix 2: 移除所有外部連結按鈕 (已刪除 <a href={youtubeWatchUrl}>) */}
 
-          {videoId && revealedAnswer && youtubeWatchUrl && (
-            <a href={youtubeWatchUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white/20 hover:bg-white/30 text-white text-sm w-fit">
-              <ExternalLink className="w-4 h-4" /> 在 YouTube 開啟
-            </a>
-          )}
-
-          {videoId && (
+          {videoId && !revealedAnswer && (
             <div className="space-y-2">
               <div><label className="text-white/80 text-sm">音量</label><input type="range" min="0" max="100" value={volume} onChange={(e) => { const v = Number(e.target.value); setVolume(v); playerRef.current?.setVolume?.(v) }} className="w-full h-2 rounded-lg accent-pink-500" /></div>
               <div className="flex gap-2">
@@ -773,25 +846,21 @@ function PlayerUI({ socket, onBack }) {
               </div>
             </div>
           )}
-          {answerStatus === 'pending' && <p className="text-white/80">答案已送出，等待主持人判定...</p>}
+          {videoId && revealedAnswer && (
+            <div className="rounded-2xl p-5 text-center bg-green-600/90 border-2 border-green-400 shadow-lg">
+              <p className="text-white/90 text-sm font-medium mb-1">正確答案</p>
+              <p className="text-2xl font-bold text-white break-words">{revealedAnswer}</p>
+              {/* Fix 2: 移除綠色區塊內的分享按鈕 */}
+            </div>
+          )}
+          {answerStatus === 'pending' && !revealedAnswer && <p className="text-white/80">答案已送出，等待主持人判定...</p>}
           {answerStatus === 'correct' && (
             <div className="bg-green-500/30 rounded-2xl p-4 text-center">
               <p className="text-xl font-bold text-green-300">答對了！</p>
               {earnedPoints > 0 && <p className="text-lg font-semibold text-yellow-300 mt-2">獲得 {earnedPoints} 分</p>}
             </div>
           )}
-          {answerStatus === 'wrong' && <p className="text-red-300">答錯囉，請再試一次</p>}
-          {revealedAnswer && (
-            <div className="bg-white/20 backdrop-blur-xl rounded-2xl p-4 text-center">
-              <p className="text-white/70 text-sm">答案</p>
-              <p className="text-xl font-bold text-amber-400">{revealedAnswer}</p>
-              {youtubeWatchUrl && (
-                <a href={youtubeWatchUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 mt-2 px-3 py-1.5 rounded-lg bg-white/20 hover:bg-white/30 text-white text-sm">
-                  <ExternalLink className="w-4 h-4" /> 分享／跳轉至 YouTube
-                </a>
-              )}
-            </div>
-          )}
+          {answerStatus === 'wrong' && !revealedAnswer && <p className="text-red-300">答錯囉，請再試一次</p>}
         </div>
 
         <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-4 lg:max-h-[calc(100vh-12rem)] flex flex-col">
@@ -845,6 +914,12 @@ function PlayerUI({ socket, onBack }) {
             </div>
             <div className="text-center">
               <p className="text-white/70 mb-4">等待主持人重新開始...</p>
+              <button 
+                onClick={handleResetGame}
+                className="px-8 py-3 bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-600 hover:to-purple-700 text-white font-semibold rounded-xl text-lg"
+              >
+                再來一局
+              </button>
             </div>
           </div>
         </div>

@@ -109,6 +109,16 @@ io.on('connection', (socket) => {
     io.emit('control_player', action)
   })
 
+  socket.on('stop_game', () => {
+    if (gameState.hostId !== socket.id) return
+    gameState.isPlaying = false
+    gameState.videoId = null
+    gameState.songTitle = ''
+    gameState.answerRevealed = false
+    io.emit('stop_game')
+    io.emit('control_player', 'stop')
+  })
+
   socket.on('reveal_answer', (songTitle) => {
     gameState.answerRevealed = true
     if (songTitle !== undefined) gameState.songTitle = songTitle
@@ -155,8 +165,8 @@ io.on('connection', (socket) => {
     const playerName = p ? p.name : `玩家 ${socket.id.slice(-6)}`
     io.to(gameState.hostId).emit('player_submitted_answer', {
       socketId: socket.id,
-      answer: (answer && String(answer).trim()) || '',
       playerName,
+      answer: (answer && String(answer).trim()) || '',
     })
   })
 
