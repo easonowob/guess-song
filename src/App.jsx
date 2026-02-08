@@ -272,7 +272,6 @@ function HostUI({ socket, onBack }) {
   }
 
   const handlePlay10Sec = () => handlePlayWithDuration(10)
-  // 設定一個很長的時間（例如 3600秒 = 1小時）來模擬無限制播放
   const handlePlayUnlimited = () => handlePlayWithDuration(3600)
   const handlePlayCustom = () => handlePlayWithDuration(Math.max(1, Math.min(120, customDurationSec)))
 
@@ -543,6 +542,345 @@ function HostUI({ socket, onBack }) {
                 ))
               )}
             </div>
+          </div>
+        </div>
+      </div>
+
+      {correctToast && <div className="fixed top-20 left-1/2 -translate-x-1/2 z-20 px-6 py-3 bg-green-600/90 text-white font-bold rounded-xl shadow-lg">{correctToast}</div>}
+      
+      {/* 遊戲結束全屏排行榜 */}
+      {gameEnded && finalLeaderboard.length > 0 && (
+        <div className="fixed inset-0 z-50 bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-800 flex items-center justify-center p-6">
+          <div className="bg-white/10 backdrop-blur-xl rounded-3xl p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <h2 className="text-4xl font-bold text-white text-center mb-8">🎉 遊戲結束 🎉</h2>
+            <h3 className="text-2xl font-bold text-white text-center mb-6">最終排行榜</h3>
+            <div className="space-y-4 mb-6">
+              {finalLeaderboard.map(({ socketId, name, score, rank }) => (
+                <div 
+                  key={socketId} 
+                  className={`flex items-center justify-between p-4 rounded-xl ${
+                    rank === 1 
+                      ? 'bg-gradient-to-r from-yellow-500/30 to-amber-500/30 border-2 border-yellow-400' 
+                      : 'bg-white/10'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className={`text-2xl font-bold ${
+                      rank === 1 ? 'text-yellow-400' : 'text-white/70'
+                    }`}>
+                      #{rank}
+                    </span>
+                    <span className={`text-xl font-semibold ${
+                      rank === 1 ? 'text-yellow-300' : 'text-white'
+                    }`}>
+                      {rank === 1 && '👑 '}
+                      {name}
+                    </span>
+                  </div>
+                  <span className={`text-2xl font-bold ${
+                    rank === 1 ? 'text-yellow-400' : 'text-amber-400'
+                  }`}>
+                    {score} 分
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="text-center">
+              <p className="text-white/70 mb-4">等待主持人重新開始...</p>
+              <button 
+                onClick={handleResetGame}
+                className="px-8 py-3 bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-600 hover:to-purple-700 text-white font-semibold rounded-xl text-lg"
+              >
+                再來一局
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function PlayerUI({ socket, onBack }) {
+  const [videoId, setVideoId] = useState(null)
+  const [startTime, setStartTime] = useState(0)
+  const [endTime, setEndTime] = useState(0)
+  const [revealedAnswer, setRevealedAnswer] = useState(null)
+  const [playKey, setPlayKey] = useState(0)
+  const [answerInput, setAnswerInput] = useState('')
+  const [answerStatus, setAnswerStatus] = useState(null)
+  const [earnedPoints, setEarnedPoints] = useState(0)
+  const [leaderboard, setLeaderboard] = useState([])
+  const [correctToast, setCorrectToast] = useState(null)
+  const [volume, setVolume] = useState(100)
+  const [gameEnded, setGameEnded] = useState(false)
+  const [finalLeaderboard, setFinalLeaderboard] = useState([])
+  const playerRef = useRef(null)
+  const shouldPlayRef = useRef(false)
+  const endTimerRef = useRef(null)
+  const startTimeRef = useRef(0)
+  const endTimeRef = useRef(0)
+  const pendingCommandRef = useRef(null)
+
+  const myRank = leaderboard.find((p) => p.socketId === socket?.id)?.rank ?? null
+  const myScore = leaderboard.find((p) => p.socketId === socket?.id)?.score ?? 0
+
+  const clearEndTimer = () => {
+    if (endTimerRef.current) clearTimeout(endTimerRef.current)
+    endTimerRef.current = null
+  }
+
+  const tryPlay = (st = 0, et = 0) => {
+    if (playerRef.current) {
+      playerRef.current.unMute?.()
+      playerRef.current.setVolume?.(volume)
+      playerRef.current.seekTo?.(st)
+      playerRef.current.playVideo?.()
+      shouldPlayRef.current = false
+      pendingCommandRef.current = null
+      clearEndTimer()
+      if (et > st) {
+        endTimerRef.current = setTimeout(() => {
+          playerRef.current?.pauseVideo?.()
+        }, (et - st) * 1000)
+      }
+    } else {
+      shouldPlayRef.current = true
+      pendingCommandRef.current = { startTime: st, endTime: et }
+    }
+  }
+
+  useEffect(() => {
+    if (!socket) return
+    const onGameState = (state) => {
+      if (state.videoId) setVideoId(state.videoId)
+      if (state.answerRevealed && state.songTitle) setRevealedAnswer(state.songTitle)
+    }
+    const onPlaySong = ({ videoId: id, startTime: st = 0, endTime: et = 0 }) => {
+      if (!id) return
+      playerRef.current = null
+      startTimeRef.current = st
+      endTimeRef.current = et
+      pendingCommandRef.current = { startTime: st, endTime: et }
+      setVideoId(id)
+      setStartTime(st)
+      setEndTime(et)
+      setRevealedAnswer(null)
+      setAnswerStatus(null)
+      setPlayKey((k) => k + 1)
+    }
+    const onAnswerResult = ({ correct, points, message }) => {
+      if (correct) {
+        setAnswerStatus('correct')
+        setEarnedPoints(points || 0)
+        if (points) {
+          setCorrectToast(`答對了！獲得 ${points} 分`)
+          setTimeout(() => setCorrectToast(null), 3000)
+        }
+      } else {
+        setAnswerStatus('wrong')
+        setEarnedPoints(0)
+        if (message) {
+          setCorrectToast(message)
+          setTimeout(() => setCorrectToast(null), 3000)
+        }
+      }
+    }
+    const onLeaderboard = (data) => setLeaderboard(Array.isArray(data) ? data : [])
+    const onCorrectBroadcast = ({ playerId, playerName, points }) => { 
+      if (playerId !== socket.id) { 
+        setCorrectToast(`${playerName} 答對了！獲得 ${points || 0} 分`)
+        setTimeout(() => setCorrectToast(null), 3000) 
+      } 
+    }
+    const onControl = (action) => {
+      if (action === 'play') tryPlay(startTimeRef.current, endTimeRef.current)
+      else if (action === 'pause' && playerRef.current) { clearEndTimer(); playerRef.current.pauseVideo?.() }
+      else if (action === 'stop') {
+        clearEndTimer()
+        setVideoId(null)
+        setRevealedAnswer(null)
+        setAnswerStatus(null)
+        shouldPlayRef.current = false
+        playerRef.current?.stopVideo?.()
+      }
+    }
+    const onReveal = (songTitle) => {
+      setRevealedAnswer(songTitle || '')
+      if (playerRef.current && startTimeRef.current != null) {
+        playerRef.current.unMute?.()
+        playerRef.current.seekTo?.(startTimeRef.current)
+        playerRef.current.playVideo?.()
+      }
+    }
+    const onStopGame = () => {
+      clearEndTimer()
+      setVideoId(null)
+      setRevealedAnswer(null)
+      setAnswerStatus(null)
+      shouldPlayRef.current = false
+      playerRef.current?.stopVideo?.()
+    }
+    const onNextRound = () => {
+      setAnswerStatus(null)
+      setEarnedPoints(0)
+    }
+    const onGameEnded = ({ leaderboard }) => {
+      setGameEnded(true)
+      setFinalLeaderboard(Array.isArray(leaderboard) ? leaderboard : [])
+    }
+    const onGameReset = () => {
+      setGameEnded(false)
+      setFinalLeaderboard([])
+      setAnswerStatus(null)
+      setEarnedPoints(0)
+    }
+
+    socket.on('game_state', onGameState)
+    socket.on('play_song', onPlaySong)
+    socket.on('your_answer_result', onAnswerResult)
+    socket.on('update_leaderboard', onLeaderboard)
+    socket.on('answer_correct_broadcast', onCorrectBroadcast)
+    socket.on('control_player', onControl)
+    socket.on('reveal_answer', onReveal)
+    socket.on('stop_game', onStopGame)
+    socket.on('next_round', onNextRound)
+    socket.on('game_ended', onGameEnded)
+    socket.on('game_reset', onGameReset)
+
+    return () => {
+      socket.off('game_state', onGameState)
+      socket.off('play_song', onPlaySong)
+      socket.off('your_answer_result', onAnswerResult)
+      socket.off('update_leaderboard', onLeaderboard)
+      socket.off('answer_correct_broadcast', onCorrectBroadcast)
+      socket.off('control_player', onControl)
+      socket.off('reveal_answer', onReveal)
+      socket.off('stop_game', onStopGame)
+      socket.off('next_round', onNextRound)
+      socket.off('game_ended', onGameEnded)
+      socket.off('game_reset', onGameReset)
+    }
+  }, [socket])
+
+  useEffect(() => () => clearEndTimer(), [])
+
+  const handleSubmitAnswer = () => {
+    const ans = answerInput.trim()
+    if (!ans) return
+    socket.emit('submit_answer', ans)
+    setAnswerInput('')
+    setAnswerStatus('pending')
+  }
+
+  const playerYouTubeStyle = { position: 'absolute', width: '1px', height: '1px', opacity: 0.01, pointerEvents: 'none', overflow: 'hidden', left: -9999 }
+  const playerYoutubeOpts = { height: '1', width: '1', playerVars: { autoplay: 0, mute: 0, controls: 0, playsinline: 1 } }
+  // Player 顯示的 opts: 寬高 100%
+  const visibleYoutubeOpts = { height: '100%', width: '100%', playerVars: { autoplay: 1, mute: 0, controls: 1, playsinline: 1 } }
+  const youtubeWatchUrl = videoId ? `https://www.youtube.com/watch?v=${videoId}` : ''
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-800 p-4">
+      <div style={playerYouTubeStyle} aria-hidden="true">
+        {videoId && (
+          <YouTube
+            key={playKey}
+            videoId={videoId}
+            opts={playerYoutubeOpts}
+            onReady={(e) => {
+              const p = e.target
+              playerRef.current = p
+              p.unMute?.()
+              p.setVolume?.(volume)
+              const pending = pendingCommandRef.current
+              if (pending) {
+                tryPlay(pending.startTime, pending.endTime)
+              } else if (shouldPlayRef.current) {
+                tryPlay(startTimeRef.current, endTimeRef.current)
+              }
+            }}
+          />
+        )}
+      </div>
+
+      <div className="flex justify-between items-center mb-4">
+        <button onClick={onBack} className="text-white/80 hover:text-white">← 返回</button>
+        <div className="flex items-center gap-2">
+          <button onClick={playTestSoundBeep} className="px-3 py-1.5 rounded-lg bg-white/20 hover:bg-white/30 text-white text-sm">🔊 測試聲音</button>
+          <button onClick={requestFullscreen} className="p-1.5 rounded-lg bg-white/20 hover:bg-white/30 text-white" title="全螢幕"><Maximize2 className="w-5 h-5" /></button>
+          <span className="text-pink-400 font-bold flex items-center gap-2"><User className="w-5 h-5" /> 猜題者</span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-4 lg:gap-6 max-w-4xl mx-auto">
+        <div className="flex flex-col gap-4">
+          <div className="flex gap-4">
+            <p className="text-amber-400 font-bold">我的分數：{myScore}</p>
+            {myRank != null && <p className="text-cyan-400 font-bold">目前排名：第 {myRank} 名</p>}
+          </div>
+
+          {/* PLAYER: 強制 16:9 且絕對滿版 (CSS 暴力修正) */}
+          <div className="relative w-full max-w-3xl mx-auto aspect-video bg-black overflow-hidden rounded-2xl shadow-lg">
+            {!videoId && (
+              <div className="w-full h-full flex items-center justify-center text-white/60">等待主持人播放音樂...</div>
+            )}
+            {videoId && !revealedAnswer && (
+              <div className="absolute inset-0 w-full h-full flex items-center justify-center">
+                <WaveformVisualizer />
+              </div>
+            )}
+            {videoId && revealedAnswer && (
+              <YouTube
+                key={`reveal-${playKey}`}
+                videoId={videoId}
+                className="absolute top-0 left-0 w-full h-full"
+                iframeClassName="w-full h-full object-cover"
+                opts={visibleYoutubeOpts}
+                onReady={(e) => {
+                  const p = e.target
+                  p.unMute?.()
+                  p.setVolume?.(volume)
+                  p.seekTo?.(startTimeRef.current ?? 0)
+                  p.playVideo?.()
+                }}
+              />
+            )}
+          </div>
+          
+          {/* Fix 2: 移除所有外部連結按鈕 (已刪除 <a href={youtubeWatchUrl}>) */}
+
+          {videoId && !revealedAnswer && (
+            <div className="space-y-2">
+              <div><label className="text-white/80 text-sm">音量</label><input type="range" min="0" max="100" value={volume} onChange={(e) => { const v = Number(e.target.value); setVolume(v); playerRef.current?.setVolume?.(v) }} className="w-full h-2 rounded-lg accent-pink-500" /></div>
+              <div className="flex gap-2">
+                <input type="text" value={answerInput} onChange={(e) => setAnswerInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSubmitAnswer()} placeholder="輸入答案..." disabled={answerStatus === 'pending' || answerStatus === 'correct'} className="flex-1 px-4 py-3 rounded-xl bg-white/20 text-white placeholder-white/50 border border-white/20 disabled:opacity-70" />
+                <button onClick={handleSubmitAnswer} disabled={!answerInput.trim() || answerStatus === 'pending' || answerStatus === 'correct'} className="px-6 py-3 bg-gradient-to-r from-pink-500 to-purple-600 text-white font-semibold rounded-xl hover:from-pink-600 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"><Send className="w-5 h-5" /> 送出</button>
+              </div>
+            </div>
+          )}
+          {videoId && revealedAnswer && (
+            <div className="rounded-2xl p-5 text-center bg-green-600/90 border-2 border-green-400 shadow-lg">
+              <p className="text-white/90 text-sm font-medium mb-1">正確答案</p>
+              <p className="text-2xl font-bold text-white break-words">{revealedAnswer}</p>
+              {/* Fix 2: 移除綠色區塊內的分享按鈕 */}
+            </div>
+          )}
+          {answerStatus === 'pending' && !revealedAnswer && <p className="text-white/80">答案已送出，等待主持人判定...</p>}
+          {answerStatus === 'correct' && (
+            <div className="bg-green-500/30 rounded-2xl p-4 text-center">
+              <p className="text-xl font-bold text-green-300">答對了！</p>
+              {earnedPoints > 0 && <p className="text-lg font-semibold text-yellow-300 mt-2">獲得 {earnedPoints} 分</p>}
+            </div>
+          )}
+          {answerStatus === 'wrong' && !revealedAnswer && <p className="text-red-300">答錯囉，請再試一次</p>}
+        </div>
+
+        <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-4 lg:max-h-[calc(100vh-12rem)] flex flex-col">
+          <h3 className="text-white font-semibold mb-2">即時排行榜</h3>
+          <div className="overflow-y-auto flex-1 min-h-0 space-y-1">
+            {leaderboard.length === 0 ? <p className="text-white/60 text-sm">尚無玩家</p> : leaderboard.map(({ socketId, name, score, rank }) => (
+              <div key={socketId} className="flex justify-between text-white text-sm"><span>#{rank} {name}</span><span className="text-amber-400 font-bold">{score} 分</span></div>
+            ))}
           </div>
         </div>
       </div>
