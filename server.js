@@ -69,12 +69,16 @@ io.on('connection', (socket) => {
       }
       players[socket.id] = { name: playerName.trim(), score: 0 }
       socket.emit('join_confirmed', { role: 'player' })
-      socket.emit('game_state', gameState)
+      // 防作弊：玩家端僅在揭曉後才收到 songTitle
+      const playerSafeState = {
+        ...gameState,
+        songTitle: gameState.answerRevealed ? gameState.songTitle : '',
+      }
+      socket.emit('game_state', playerSafeState)
       broadcastLeaderboard()
       if (gameState.videoId && gameState.isPlaying) {
         socket.emit('play_song', {
           videoId: gameState.videoId,
-          songTitle: gameState.songTitle,
           startTime: 0,
           endTime: 60,
         })
@@ -91,7 +95,8 @@ io.on('connection', (socket) => {
     gameState.answerRevealed = false
     gameState.roundLocked = false
     gameState.correctAnswersThisRound = []
-    socket.broadcast.emit('play_song', { videoId, songTitle, startTime, endTime })
+    // 防作弊：只對玩家廣播 videoId + 時間，不傳送 songTitle（揭曉時才由 reveal_answer 傳送）
+    socket.broadcast.emit('play_song', { videoId, startTime, endTime })
     socket.broadcast.emit('control_player', 'play')
     socket.emit('game_state', gameState)
     io.emit('round_update', { currentRound: gameState.currentRound, totalRounds: gameState.totalRounds })

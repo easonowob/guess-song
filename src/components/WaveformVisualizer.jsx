@@ -61,7 +61,7 @@ export function WaveformVisualizer() {
   return (
     <canvas
       ref={canvasRef}
-      className="w-full h-48 rounded-2xl"
+      className="w-full h-full rounded-2xl"
       style={{ background: 'rgba(0,0,0,0.2)' }}
     />
   )
