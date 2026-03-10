@@ -49,6 +49,22 @@ function broadcastLeaderboard() {
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id)
 
+  // 提示事件
+  socket.on('send_hint', (hint) => {
+    // 預期 hint: { label, value }
+    if (hint && typeof hint === 'object' && hint.value) {
+      const safeHint = {
+        label: typeof hint.label === 'string' ? hint.label : '',
+        value: String(hint.value),
+      }
+      io.emit('send_hint', safeHint)
+    }
+  })
+
+  socket.on('clear_hints', () => {
+    io.emit('clear_hints')
+  })
+
   socket.on('join_game', (payload) => {
     const role = typeof payload === 'string' ? payload : payload?.role
     const playerName = (typeof payload === 'object' && payload?.playerName?.trim?.()) || null
